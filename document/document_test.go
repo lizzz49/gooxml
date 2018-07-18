@@ -103,6 +103,34 @@ func TestInsertParagraph(t *testing.T) {
 	}
 }
 
+func TestInsertTable(t *testing.T) {
+	doc := document.New()
+	if len(doc.Paragraphs()) != 0 {
+		t.Errorf("expected 0 paragraphs, got %d", len(doc.Paragraphs()))
+	}
+	p1 := doc.AddParagraph()
+	p2 := doc.AddParagraph()
+	beforeP1 := doc.InsertTableBefore(p1)
+	afterP1 := doc.InsertTableAfter(p1)
+	beforeP2 := doc.InsertTableBefore(p2)
+	afterP2 := doc.InsertTableAfter(p2)
+	if len(doc.Tables()) != 4 {
+		t.Errorf("expected 4 tables, got %d", len(doc.Tables()))
+	}
+	if doc.Tables()[0].X() != beforeP1.X() {
+		t.Error("InsertTableBefore 1st paragraph failed")
+	}
+	if doc.Tables()[1].X() != afterP1.X() {
+		t.Error("InsertTableAfter 1st paragraph failed")
+	}
+	if doc.Tables()[2].X() != beforeP2.X() {
+		t.Error("InsertTableBefore 2nd paragraph failed")
+	}
+	if doc.Tables()[3].X() != afterP2.X() {
+		t.Error("InsertTableAfter 2nd paragraph failed")
+	}
+}
+
 func TestInsertRun(t *testing.T) {
 	doc := document.New()
 	if len(doc.Paragraphs()) != 0 {
@@ -178,7 +206,7 @@ func TestDuplicateBookmarks(t *testing.T) {
 	}
 }
 
-func TestHeaderImages(t *testing.T) {
+func TestHeaderAndFooterImages(t *testing.T) {
 	doc := document.New()
 	img1, err := common.ImageFromFile("testdata/gopher.png")
 	if err != nil {
@@ -198,20 +226,28 @@ func TestHeaderImages(t *testing.T) {
 	}
 
 	if dir1.RelID() != "rId4" {
-		t.Errorf("expected rId4")
+		t.Errorf("expected rId4 != %s", dir1.RelID())
 	}
 	if dir2.RelID() != "rId5" {
-		t.Errorf("expected rId5")
+		t.Errorf("expected rId5 != %s", dir2.RelID())
 	}
 
 	hdr := doc.AddHeader()
+	ftr := doc.AddFooter()
 	hir1, err := hdr.AddImage(img1)
+	fir1, err := ftr.AddImage(img1)
 	hir2, err := hdr.AddImage(img2)
+	fir2, err := ftr.AddImage(img2)
 	if hir1.RelID() != "rId1" {
-		t.Errorf("expected rId1")
+		t.Errorf("expected rId1 != %s", hir1.RelID())
 	}
 	if hir2.RelID() != "rId2" {
-		t.Errorf("expected rId1")
+		t.Errorf("expected rId2 != %s", hir2.RelID())
 	}
-
+	if fir1.RelID() != "rId1" {
+		t.Errorf("expected rId1 != %s", hir1.RelID())
+	}
+	if fir2.RelID() != "rId2" {
+		t.Errorf("expected rId2 != %s", hir2.RelID())
+	}
 }

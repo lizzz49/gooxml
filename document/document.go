@@ -16,6 +16,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"strings"
 
 	"baliance.com/gooxml"
 	"baliance.com/gooxml/common"
@@ -42,6 +43,7 @@ type Document struct {
 	hdrRels []common.Relationships
 
 	footers []*wml.Ftr
+	ftrRels []common.Relationships
 
 	docRels     common.Relationships
 	themes      []*dml.Theme
@@ -131,7 +133,10 @@ func (d *Document) AddFooter() Footer {
 	d.footers = append(d.footers, ftr)
 	path := fmt.Sprintf("footer%d.xml", len(d.footers))
 	d.docRels.AddRelationship(path, gooxml.FooterType)
+
 	d.ContentTypes.AddOverride("/word/"+path, "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml")
+	d.ftrRels = append(d.ftrRels, common.NewRelationships())
+
 	return Footer{d, ftr}
 }
 
@@ -227,13 +232,17 @@ func (d *Document) Save(w io.Writer) error {
 		}
 	}
 	for i, ftr := range d.footers {
+		fn := gooxml.AbsoluteFilename(dt, gooxml.FooterType, i+1)
 		if err := zippkg.MarshalXMLByTypeIndex(z, dt, gooxml.FooterType, i+1, ftr); err != nil {
 			return err
+		}
+		if !d.ftrRels[i].IsEmpty() {
+			zippkg.MarshalXML(z, zippkg.RelationsPathFor(fn), d.ftrRels[i].X())
 		}
 	}
 
 	for i, img := range d.Images {
-		fn := fmt.Sprintf("word/media/image%d.png", i+1)
+		fn := fmt.Sprintf("word/media/image%d.%s", i+1, strings.ToLower(img.Format()))
 		if img.Path() != "" {
 			if err := zippkg.AddFileFromDisk(z, fn, img.Path()); err != nil {
 				return err
@@ -261,6 +270,64 @@ func (d *Document) AddTable() Table {
 	tbl := wml.NewCT_Tbl()
 	c.Tbl = append(c.Tbl, tbl)
 	return Table{d, tbl}
+}
+
+func (d *Document) InsertTableAfter(relativeTo Paragraph) Table {
+	return d.insertTable(relativeTo, false)
+}
+
+func (d *Document) InsertTableBefore(relativeTo Paragraph) Table {
+	return d.insertTable(relativeTo, true)
+}
+
+func (d *Document) insertTable(relativeTo Paragraph, before bool) Table {
+	if d.x.Body == nil {
+		return d.AddTable()
+	}
+	for i, ble := range d.x.Body.EG_BlockLevelElts {
+		for _, c := range ble.EG_ContentBlockContent {
+			for j, p := range c.P {
+				// found the paragraph
+				if p == relativeTo.X() {
+					tbl := wml.NewCT_Tbl()
+					elts := wml.NewEG_BlockLevelElts()
+					cbc := wml.NewEG_ContentBlockContent()
+					elts.EG_ContentBlockContent = append(elts.EG_ContentBlockContent, cbc)
+					cbc.Tbl = append(cbc.Tbl, tbl)
+					d.x.Body.EG_BlockLevelElts = append(d.x.Body.EG_BlockLevelElts, nil)
+					if before {
+						copy(d.x.Body.EG_BlockLevelElts[i+1:], d.x.Body.EG_BlockLevelElts[i:])
+						d.x.Body.EG_BlockLevelElts[i] = elts
+						if j != 0 {
+							elts := wml.NewEG_BlockLevelElts()
+							cbc := wml.NewEG_ContentBlockContent()
+							elts.EG_ContentBlockContent = append(elts.EG_ContentBlockContent, cbc)
+							cbc.P = c.P[:j]
+							d.x.Body.EG_BlockLevelElts = append(d.x.Body.EG_BlockLevelElts, nil)
+							copy(d.x.Body.EG_BlockLevelElts[i+1:], d.x.Body.EG_BlockLevelElts[i:])
+							d.x.Body.EG_BlockLevelElts[i] = elts
+						}
+						c.P = c.P[j:]
+					} else {
+						copy(d.x.Body.EG_BlockLevelElts[i+2:], d.x.Body.EG_BlockLevelElts[i+1:])
+						d.x.Body.EG_BlockLevelElts[i+1] = elts
+						if j != len(c.P)-1 {
+							elts := wml.NewEG_BlockLevelElts()
+							cbc := wml.NewEG_ContentBlockContent()
+							elts.EG_ContentBlockContent = append(elts.EG_ContentBlockContent, cbc)
+							cbc.P = c.P[j+1:]
+							d.x.Body.EG_BlockLevelElts = append(d.x.Body.EG_BlockLevelElts, nil)
+							copy(d.x.Body.EG_BlockLevelElts[i+3:], d.x.Body.EG_BlockLevelElts[i+2:])
+							d.x.Body.EG_BlockLevelElts[i+2] = elts
+						}
+						c.P = c.P[:j+1]
+					}
+					return Table{d, tbl}
+				}
+			}
+		}
+	}
+	return d.AddTable()
 }
 
 // Tables returns the tables defined in the document.
@@ -511,12 +578,13 @@ func (d *Document) AddImage(i common.Image) (common.ImageRef, error) {
 
 	d.Images = append(d.Images, r)
 	fn := fmt.Sprintf("media/image%d.%s", len(d.Images), i.Format)
-	d.docRels.AddRelationship(fn, gooxml.ImageType)
+	rel := d.docRels.AddRelationship(fn, gooxml.ImageType)
 	d.ContentTypes.EnsureDefault("png", "image/png")
 	d.ContentTypes.EnsureDefault("jpeg", "image/jpeg")
 	d.ContentTypes.EnsureDefault("jpg", "image/jpeg")
 	d.ContentTypes.EnsureDefault("wmf", "image/x-wmf")
 	d.ContentTypes.EnsureDefault(i.Format, "image/"+i.Format)
+	r.SetRelID(rel.X().IdAttr)
 	return r, nil
 }
 
@@ -651,6 +719,11 @@ func (d *Document) onNewRelationship(decMap *zippkg.DecodeMap, target, typ strin
 		decMap.AddTarget(target, ftr, typ, uint32(len(d.footers)))
 		d.footers = append(d.footers, ftr)
 		rel.TargetAttr = gooxml.RelativeFilename(dt, src.Typ, typ, len(d.footers))
+
+		// look for footer rels
+		ftrRel := common.NewRelationships()
+		decMap.AddTarget(zippkg.RelationsPathFor(target), ftrRel.X(), typ, 0)
+		d.ftrRels = append(d.ftrRels, ftrRel)
 
 	case gooxml.ThemeType:
 		thm := dml.NewTheme()
